@@ -27,7 +27,7 @@ jobs:
 
       - name: Configure System
         run: |
-          echo "bookworm" | sudo tee build/rootfs/etc/hostname
+          echo "Debian-Bookworm" | sudo tee build/rootfs/etc/hostname
           echo "127.0.0.1 localhost" | sudo tee -a build/rootfs/etc/hosts
           echo "127.0.1.1 debian" | sudo tee -a build/rootfs/etc/hosts
           echo "root:HelpToChangeMe" | sudo chroot build/rootfs chpasswd
@@ -133,7 +133,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         with:
           tag_name: 'v1.0.0'
-          release_name: 'Debian Bookworm On XFS v1.0.0'
+          release_name: 'Debian Bookworm XFS v1.0.0'
           draft: false
           prerelease: false
 
