@@ -1,4 +1,4 @@
-name: Debian Bookworm with XFS (QCOW2/IMG)
+name: Debian Bookworm XFS
 
 on:
   push:
@@ -31,47 +31,44 @@ jobs:
           echo "127.0.0.1 localhost" | sudo tee -a build/rootfs/etc/hosts
           echo "127.0.1.1 debian" | sudo tee -a build/rootfs/etc/hosts
 
-      - name: Install Kernel and Grub
+      - name: Install Kernel and GRUB
         run: |
           sudo mount --bind /dev build/rootfs/dev
           sudo chroot build/rootfs bash -c "
             apt update &&
-            apt install -y linux-image-amd64 grub-efi-amd64
+            apt install -y linux-image-amd64 grub-efi-amd64 nano wget curl bash bash-completion
           "
           sudo umount build/rootfs/dev
 
-      - name: Create Disk Image
+      - name: Create and Partition QCOW2 Disk
         run: |
-          IMG_FILE="build/debian-bookworm.img"
-          DISK_SIZE="4G"
+          QCOW2_FILE="build/debian-bookworm.qcow2"
+          DISK_SIZE="1G"
           EFI_SIZE="200M"
-          
-          # Create a raw disk image
-          dd if=/dev/zero of=$IMG_FILE bs=1M count=0 seek=$DISK_SIZE
-          
-          # Partition the disk: GPT with EFI and root partitions
-          echo -e "label: gpt\n,${EFI_SIZE},U\n,,L" | sudo sfdisk $IMG_FILE
 
-          # Setup loop device
-          LOOP_DEV=$(sudo losetup --show --find -P $IMG_FILE)
-          
-          # Format partitions
-          sudo mkfs.vfat -F32 ${LOOP_DEV}p1
-          sudo mkfs.xfs -f ${LOOP_DEV}p2
+          # Create QCOW2 disk
+          qemu-img create -f qcow2 $QCOW2_FILE $DISK_SIZE
+
+          # Set up loopback device
+          sudo modprobe nbd max_part=8
+          sudo qemu-nbd --connect=/dev/nbd0 $QCOW2_FILE
+          sudo parted /dev/nbd0 --script mklabel gpt
+          sudo parted /dev/nbd0 --script mkpart ESP fat32 1MiB ${EFI_SIZE}
+          sudo parted /dev/nbd0 --script mkpart primary xfs ${EFI_SIZE} 100%
+          sudo mkfs.vfat -F32 /dev/nbd0p1
+          sudo mkfs.xfs -f /dev/nbd0p2
 
       - name: Mount and Install System
         run: |
           mkdir -p build/mnt
-          
-          # Mount root partition
-          sudo mount ${LOOP_DEV}p2 build/mnt
+          sudo mount /dev/nbd0p2 build/mnt
           sudo mkdir -p build/mnt/boot/efi
-          sudo mount ${LOOP_DEV}p1 build/mnt/boot/efi
-          
+          sudo mount /dev/nbd0p1 build/mnt/boot/efi
+
           # Copy root filesystem
           sudo cp -a build/rootfs/. build/mnt
 
-      - name: Install GRUB to Image
+      - name: Install GRUB to QCOW2
         run: |
           sudo mount --bind /dev build/mnt/dev
           sudo chroot build/mnt bash -c "
@@ -84,15 +81,10 @@ jobs:
         run: |
           sudo umount build/mnt/boot/efi
           sudo umount build/mnt
-          sudo losetup -d $LOOP_DEV
+          sudo qemu-nbd --disconnect /dev/nbd0
 
-      - name: Convert to QCOW2
-        run: |
-          qemu-img convert -f raw -O qcow2 build/debian-bookworm.img build/debian-bookworm.qcow2
-
-      - name: Upload Image Artifacts
+      - name: Upload QCOW2 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: debian-bookworm-disk-images
+          name: debian-bookworm-qcow2
           path: build/debian-bookworm.qcow2
-
