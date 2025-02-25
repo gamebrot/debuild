@@ -55,8 +55,8 @@ jobs:
           sudo parted /dev/nbd0 --script mklabel gpt
           sudo parted /dev/nbd0 --script mkpart ESP fat32 1MiB ${EFI_SIZE}
           sudo parted /dev/nbd0 --script mkpart primary xfs ${EFI_SIZE} 100%
-          sudo mkfs.vfat -F32 /dev/nbd0p1
-          sudo mkfs.xfs -f /dev/nbd0p2
+          sudo mkfs.vfat -F32 -n EFI /dev/nbd0p1
+          sudo mkfs.xfs -f -L ROOTFS /dev/nbd0p2
 
       - name: Mount and Install System
         run: |
@@ -68,8 +68,8 @@ jobs:
           # Copy root filesystem
           sudo cp -a build/rootfs/. build/mnt
 
-          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p1) /boot/efi vfat defaults 0 1" | sudo tee -a build/rootfs/etc/fstab
-          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p2) / xfs defaults 0 1" | sudo tee build/rootfs/etc/fstab
+          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p1) /boot/efi vfat defaults 0 1" | sudo tee -a build/mnt/etc/fstab
+          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p2) / xfs defaults 0 1" | sudo tee build/mnt/etc/fstab
 
       - name: Install GRUB to QCOW2
         run: |
@@ -86,8 +86,12 @@ jobs:
           sudo umount build/mnt
           sudo qemu-nbd --disconnect /dev/nbd0
 
-      - name: Upload QCOW2 Artifact
+      - name: Compress QCOW2 with zstd (Level 22)
+        run: |
+          zstd --ultra --verbose -22 --rm -o build/debian-bookworm.qcow2.zst build/debian-bookworm.qcow2
+
+      - name: Upload QCOW2
         uses: actions/upload-artifact@v4
         with:
-          name: debian-bookworm-qcow2
-          path: build/debian-bookworm.qcow2
+          name: debian-bookworm-qcow2-zstd
+          path: build/debian-bookworm.qcow2.zst
