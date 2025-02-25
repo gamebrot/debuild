@@ -1,0 +1,98 @@
+name: Debian Bookworm with XFS (QCOW2/IMG)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y debootstrap qemu-utils xfsprogs \
+              grub-efi-amd64-bin grub-pc-bin dosfstools gdisk
+
+      - name: Create Root Filesystem
+        run: |
+          mkdir -p build/rootfs
+          sudo debootstrap --arch=amd64 bookworm build/rootfs http://deb.debian.org/debian/
+
+      - name: Configure System
+        run: |
+          echo "bookworm" | sudo tee build/rootfs/etc/hostname
+          echo "127.0.0.1 localhost" | sudo tee -a build/rootfs/etc/hosts
+          echo "127.0.1.1 debian" | sudo tee -a build/rootfs/etc/hosts
+
+      - name: Install Kernel and Grub
+        run: |
+          sudo mount --bind /dev build/rootfs/dev
+          sudo chroot build/rootfs bash -c "
+            apt update &&
+            apt install -y linux-image-amd64 grub-efi-amd64
+          "
+          sudo umount build/rootfs/dev
+
+      - name: Create Disk Image
+        run: |
+          IMG_FILE="build/debian-bookworm.img"
+          DISK_SIZE="4G"
+          EFI_SIZE="200M"
+          
+          # Create a raw disk image
+          dd if=/dev/zero of=$IMG_FILE bs=1M count=0 seek=$DISK_SIZE
+          
+          # Partition the disk: GPT with EFI and root partitions
+          echo -e "label: gpt\n,${EFI_SIZE},U\n,,L" | sudo sfdisk $IMG_FILE
+
+          # Setup loop device
+          LOOP_DEV=$(sudo losetup --show --find -P $IMG_FILE)
+          
+          # Format partitions
+          sudo mkfs.vfat -F32 ${LOOP_DEV}p1
+          sudo mkfs.xfs -f ${LOOP_DEV}p2
+
+      - name: Mount and Install System
+        run: |
+          mkdir -p build/mnt
+          
+          # Mount root partition
+          sudo mount ${LOOP_DEV}p2 build/mnt
+          sudo mkdir -p build/mnt/boot/efi
+          sudo mount ${LOOP_DEV}p1 build/mnt/boot/efi
+          
+          # Copy root filesystem
+          sudo cp -a build/rootfs/. build/mnt
+
+      - name: Install GRUB to Image
+        run: |
+          sudo mount --bind /dev build/mnt/dev
+          sudo chroot build/mnt bash -c "
+            grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Debian
+            grub-mkconfig -o /boot/grub/grub.cfg
+          "
+          sudo umount build/mnt/dev
+
+      - name: Unmount and Cleanup
+        run: |
+          sudo umount build/mnt/boot/efi
+          sudo umount build/mnt
+          sudo losetup -d $LOOP_DEV
+
+      - name: Convert to QCOW2
+        run: |
+          qemu-img convert -f raw -O qcow2 build/debian-bookworm.img build/debian-bookworm.qcow2
+
+      - name: Upload Image Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-bookworm-disk-images
+          path: build/debian-bookworm.qcow2
+
