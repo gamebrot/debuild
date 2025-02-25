@@ -30,6 +30,14 @@ jobs:
           echo "bookworm" | sudo tee build/rootfs/etc/hostname
           echo "127.0.0.1 localhost" | sudo tee -a build/rootfs/etc/hosts
           echo "127.0.1.1 debian" | sudo tee -a build/rootfs/etc/hosts
+          echo "root:HelpToChangeMe" | sudo chroot build/rootfs chpasswd
+
+      - name: Enable Root Auto-Login
+        run: |
+          sudo mkdir -p build/rootfs/etc/systemd/system/getty@tty1.service.d
+          echo "[Service]" | sudo tee build/rootfs/etc/systemd/system/getty@tty1.service.d/override.conf
+          echo "ExecStart=" | sudo tee -a build/rootfs/etc/systemd/system/getty@tty1.service.d/override.conf
+          echo 'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' | sudo tee -a build/rootfs/etc/systemd/system/getty@tty1.service.d/override.conf
 
       - name: Install Kernel and GRUB
         run: |
@@ -46,11 +54,9 @@ jobs:
           DISK_SIZE="2G"
           EFI_SIZE="200M"
 
-          # Create QCOW2 disk
           qemu-img create -f qcow2 -o compression_type=zstd $QCOW2_FILE $DISK_SIZE
 
-          # Set up loopback device
-          sudo modprobe nbd max_part=5
+          sudo modprobe nbd max_part=6 nbds_max=1
           sudo qemu-nbd --connect=/dev/nbd0 $QCOW2_FILE
           sudo parted /dev/nbd0 --script mklabel gpt
           sudo parted /dev/nbd0 --script mkpart ESP fat32 1MiB ${EFI_SIZE}
@@ -75,8 +81,19 @@ jobs:
             grub-mkconfig -o /boot/grub/grub.cfg
           "
 
-          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p1) /boot/efi vfat defaults 0 1" | sudo tee -a build/mnt/etc/fstab
-          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p2) /         xfs  defaults 0 1" | sudo tee build/mnt/etc/fstab
+          sudo partprobe /dev/nbd0
+          sleep 7
+
+          EFI_UUID=$(sudo blkid -s UUID -o value /dev/nbd0p1 || echo "MISSING_EFI_UUID")
+          ROOT_UUID=$(sudo blkid -s UUID -o value /dev/nbd0p2 || echo "MISSING_ROOT_UUID")
+
+          if [[ "$EFI_UUID" == "MISSING_EFI_UUID" || "$ROOT_UUID" == "MISSING_ROOT_UUID" ]]; then
+            echo "Error: Unable to retrieve UUIDs!" >&2
+            exit 1
+          fi
+
+          echo "UUID=$EFI_UUID /boot/efi vfat defaults 0 1" | sudo tee build/mnt/etc/fstab
+          echo "UUID=$ROOT_UUID /        xfs  defaults 0 1" | sudo tee -a build/mnt/etc/fstab
 
           for i in /sys /proc /run /dev/pts /dev; do sudo umount "build/mnt$i"; done
 
