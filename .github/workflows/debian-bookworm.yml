@@ -1,4 +1,4 @@
-name: Debian Bookworm XFS
+name: Debian Bookworm On XFS
 
 on:
   push:
@@ -36,18 +36,18 @@ jobs:
           sudo mount --bind /dev build/rootfs/dev
           sudo chroot build/rootfs bash -c "
             apt update &&
-            apt install -y linux-image-amd64 grub-efi-amd64 nano wget curl bash bash-completion
+            apt install -y linux-image-amd64 grub-efi-amd64 nano wget curl bash bash-completion ifupdown2 openssh-server ethtool bridge-utils net-tools
           "
           sudo umount build/rootfs/dev
 
       - name: Create and Partition QCOW2 Disk
         run: |
           QCOW2_FILE="build/debian-bookworm.qcow2"
-          DISK_SIZE="1G"
+          DISK_SIZE="2G"
           EFI_SIZE="200M"
 
           # Create QCOW2 disk
-          qemu-img create -f qcow2 $QCOW2_FILE $DISK_SIZE
+          qemu-img create -f qcow2 -o compression_type=zstd $QCOW2_FILE $DISK_SIZE
 
           # Set up loopback device
           sudo modprobe nbd max_part=8
@@ -67,6 +67,9 @@ jobs:
 
           # Copy root filesystem
           sudo cp -a build/rootfs/. build/mnt
+
+          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p1) /boot/efi vfat defaults 0 1" | sudo tee -a build/rootfs/etc/fstab
+          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p2) / xfs defaults 0 1" | sudo tee build/rootfs/etc/fstab
 
       - name: Install GRUB to QCOW2
         run: |
