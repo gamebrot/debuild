@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y debootstrap qemu-utils xfsprogs \
-              grub-efi-amd64-bin grub-pc-bin dosfstools gdisk rsync
+              grub-efi-amd64-bin grub-pc-bin dosfstools gdisk rsync util-linux
 
       - name: Create Root Filesystem
         run: |
@@ -36,7 +36,7 @@ jobs:
           sudo mount --bind /dev build/rootfs/dev
           sudo chroot build/rootfs bash -c "
             apt update &&
-            apt install -y linux-image-amd64 grub-efi-amd64 nano wget curl bash bash-completion ifupdown2 openssh-server ethtool bridge-utils net-tools
+            apt install -y linux-image-amd64 grub-efi-amd64 nano wget curl bash bash-completion ifupdown2 openssh-server ethtool bridge-utils net-tools util-linux systemd-zram-generator
           "
           sudo umount build/rootfs/dev
 
@@ -67,16 +67,17 @@ jobs:
 
           sudo rsync -varHAX build/rootfs/. build/mnt/
 
-          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p1) /boot/efi vfat defaults 0 1" | sudo tee -a build/mnt/etc/fstab
-          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p2) / xfs defaults 0 1" | sudo tee build/mnt/etc/fstab
-
-      - name: Install GRUB to QCOW2
+      - name: Install GRUB and Add FSTAB
         run: |
           for i in /sys /proc /run /dev /dev/pts ; do sudo mount --bind "$i" "build/mnt$i"; done
           sudo chroot build/mnt bash -c "
             grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Debian
             grub-mkconfig -o /boot/grub/grub.cfg
           "
+
+          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p1) /boot/efi vfat defaults 0 1" | sudo tee -a build/mnt/etc/fstab
+          echo "UUID=$(blkid -s UUID -o value /dev/nbd0p2) /         xfs  defaults 0 1" | sudo tee build/mnt/etc/fstab
+
           for i in /sys /proc /run /dev/pts /dev; do sudo umount "build/mnt$i"; done
 
       - name: Unmount and Cleanup
