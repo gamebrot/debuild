@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: debian-latest
 
     steps:
       - name: Checkout Repository
@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y debootstrap qemu-utils xfsprogs \
-              grub-efi-amd64-bin grub-pc-bin dosfstools gdisk
+              grub-efi-amd64-bin grub-pc-bin dosfstools gdisk rsync
 
       - name: Create Root Filesystem
         run: |
@@ -50,7 +50,7 @@ jobs:
           qemu-img create -f qcow2 -o compression_type=zstd $QCOW2_FILE $DISK_SIZE
 
           # Set up loopback device
-          sudo modprobe nbd max_part=8
+          sudo modprobe nbd max_part=5
           sudo qemu-nbd --connect=/dev/nbd0 $QCOW2_FILE
           sudo parted /dev/nbd0 --script mklabel gpt
           sudo parted /dev/nbd0 --script mkpart ESP fat32 1MiB ${EFI_SIZE}
@@ -65,20 +65,19 @@ jobs:
           sudo mkdir -p build/mnt/boot/efi
           sudo mount /dev/nbd0p1 build/mnt/boot/efi
 
-          # Copy root filesystem
-          sudo cp -a build/rootfs/. build/mnt
+          sudo rsync -varHAX build/rootfs/. build/mnt/
 
           echo "UUID=$(blkid -s UUID -o value /dev/nbd0p1) /boot/efi vfat defaults 0 1" | sudo tee -a build/mnt/etc/fstab
           echo "UUID=$(blkid -s UUID -o value /dev/nbd0p2) / xfs defaults 0 1" | sudo tee build/mnt/etc/fstab
 
       - name: Install GRUB to QCOW2
         run: |
-          sudo mount --bind /dev build/mnt/dev
+          for i in /sys /proc /run /dev /dev/pts ; do sudo mount --bind "$i" "build/mnt$i"; done
           sudo chroot build/mnt bash -c "
             grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Debian
             grub-mkconfig -o /boot/grub/grub.cfg
           "
-          sudo umount build/mnt/dev
+          for i in /sys /proc /run /dev/pts /dev; do sudo umount "/mnt$i"; done
 
       - name: Unmount and Cleanup
         run: |
@@ -86,12 +85,13 @@ jobs:
           sudo umount build/mnt
           sudo qemu-nbd --disconnect /dev/nbd0
 
-      - name: Compress QCOW2 with zstd (Level 22)
+      - name: Compress QCOW2 with Adaptive zstd
         run: |
-          zstd --ultra --verbose -22 --rm -o build/debian-bookworm.qcow2.zst build/debian-bookworm.qcow2
+          zstd --adapt --verbose --rm -o build/debian-bookworm.qcow2.zst build/debian-bookworm.qcow2
 
       - name: Upload QCOW2
         uses: actions/upload-artifact@v4
         with:
           name: debian-bookworm-qcow2-zstd
           path: build/debian-bookworm.qcow2.zst
+
