@@ -77,7 +77,7 @@ jobs:
             grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Debian
             grub-mkconfig -o /boot/grub/grub.cfg
           "
-          for i in /sys /proc /run /dev/pts /dev; do sudo umount "/mnt$i"; done
+          for i in /sys /proc /run /dev/pts /dev; do sudo umount "build/mnt$i"; done
 
       - name: Unmount and Cleanup
         run: |
